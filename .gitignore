@@ -28,3 +28,4 @@ data/*.bin
 data/*.pkl
 data/*.bin
 data/*.pk.
+frontend/.env

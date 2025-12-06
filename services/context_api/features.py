@@ -81,22 +81,39 @@ def _sent_from_headlines(headlines: List[dict]) -> tuple[float, float]:
     except Exception:
         return 0.0, 0.05
 
+def _merge_refs(ticker: str, fn: List[dict], yh: List[dict]) -> List[dict]:
+    """Merge finnhub + yahoo refs, de-dup by URL, keep order, take up to 3."""
+    seen = set()
+    out: List[dict] = []
+    for lst in (fn, yh):
+        for h in lst or []:
+            title = (h.get("title") or "").strip()
+            url   = (h.get("url")   or "").strip()
+            pub   = (h.get("publisher") or "").strip()
+            if not title or not url: continue
+            if url in seen: continue
+            seen.add(url)
+            out.append({"title": title, "publisher": pub or "News", "url": url})
+            if len(out) >= 3: break
+        if len(out) >= 3: break
+    return out
+
 def build_features_for(ticker: str) -> Dict[str, Any]:
     live = os.getenv("LIVE_PROVIDERS") == "1"
     error: Optional[str] = None
     top_headline: Optional[dict] = None
 
-    # TTL cache (live only)
     if live:
         cached = get_cached(ticker)
         if cached:
             return cached
-
-    if not live:
+    else:
         feats = _synthetic_feats()
         payload = {
             "features": feats,
             "top_headline": top_headline,
+            "refs": [],
+            "refs_sources": [],
             "error": error,
             "quote": {"last": 0.0, "bid": None, "ask": None, "quality": "unknown"},
             "ts": iso_now(),
@@ -104,22 +121,32 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
         return payload
 
     try:
-        # ----- Headlines: Finnhub -> Yahoo fallback
-        headlines: List[dict] = []
+        # ----- Headlines: Finnhub -> Yahoo fallback; then merge to refs
+        fh: List[dict] = []
+        yh: List[dict] = []
         try:
-            headlines = fetch_headlines(ticker, limit=5)
+            fh = fetch_headlines(ticker, limit=5)
         except FHError as e:
             error = f"news: {e}"
-        if not headlines:
-            try:
-                headlines = fetch_headlines_yahoo(ticker, limit=5)
-            except Exception as e:
-                error = (error + f"; yahoo: {e}") if error else f"yahoo: {e}"
-        if headlines:
-            top_headline = headlines[0]
+        try:
+            yh = fetch_headlines_yahoo(ticker, limit=5)
+        except Exception as e:
+            error = (error + f"; yahoo: {e}") if error else f"yahoo: {e}"
+
+        # choose top for legacy field
+        if fh:
+            top_headline = fh[0]
+        elif yh:
+            top_headline = yh[0]
+
+        refs = _merge_refs(ticker, fh, yh)
+        refs_sources = [r["publisher"] for r in refs]
+        # pad to length 3 with None for stable indexing
+        while len(refs) < 3:
+            refs.append(None)
 
         # ----- Sentiment
-        sent_mean, sent_std = _sent_from_headlines(headlines)
+        sent_mean, sent_std = _sent_from_headlines([r for r in (fh or [])[:3] if r] or [r for r in (yh or [])[:3] if r])
 
         # ----- Quotes + Candles (Tiingo primary)
         quote_ti = fetch_quote_tiingo(ticker)
@@ -141,8 +168,7 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
                     last_px = float(qfh["last"])
             except Exception:
                 pass
-
-        if last_px <= 0.0: last_px = 1.0  # guard
+        if last_px <= 0.0: last_px = 1.0
 
         _note_quote(ticker, last_px)
 
@@ -156,9 +182,12 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
 
         # ----- mins since news (cap 240)
         mins_since_news = 9999
-        if headlines:
-            latest = max(_parse_iso_aware(h.get("ts","")) for h in headlines if h.get("ts"))
-            mins_since_news = int((datetime.now(timezone.utc) - latest).total_seconds() // 60)
+        if fh or yh:
+            pool = (fh or []) + (yh or [])
+            pool = [p for p in pool if p.get("ts")]
+            if pool:
+                latest = max(_parse_iso_aware(p["ts"]) for p in pool)
+                mins_since_news = int((datetime.now(timezone.utc) - latest).total_seconds() // 60)
         mins_since_news = min(int(mins_since_news), 240)
 
         # ----- Returns & rv20 with padding
@@ -201,11 +230,8 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
 
         # ----- Liquidity (IEX-friendly)
         spread_bps = abs(ask_disp - bid_disp) / last_px * 1e4 if last_px else 9999
-        if candles:
-            vol_1m = int(candles[-1]["volume"])
-            vol_5m = sum(int(c["volume"]) for c in candles[-5:])
-        else:
-            vol_1m = 0; vol_5m = 0
+        vol_1m = int(candles[-1]["volume"]) if candles else 0
+        vol_5m = sum(int(c["volume"]) for c in (candles[-5:] if candles else []))
         liquidity_flag = (spread_bps <= 30.0) or (vol_1m >= 1_000) or (vol_5m >= 5_000)
 
         feats = {
@@ -221,12 +247,12 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
         payload = {
             "features": feats,
             "top_headline": top_headline,
+            "refs": refs,                   # <= up to 3 (padded to length 3 with None)
+            "refs_sources": refs_sources,   # <= publishers list for tooltip if needed
             "error": error,
             "quote": {"last": float(last_px), "bid": float(bid_disp), "ask": float(ask_disp), "quality": quality},
             "ts": iso_now(),
         }
-
-        # store to TTL cache
         put_cached(ticker, payload)
         return payload
 
@@ -238,6 +264,8 @@ def build_features_for(ticker: str) -> Dict[str, Any]:
     payload = {
         "features": _synthetic_feats(),
         "top_headline": top_headline,
+        "refs": [],
+        "refs_sources": [],
         "error": error,
         "quote": {"last": 0.0, "bid": None, "ask": None, "quality": "unknown"},
         "ts": iso_now(),
