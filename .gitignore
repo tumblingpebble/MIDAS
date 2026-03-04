@@ -53,3 +53,7 @@ nginx.conf
 Dockerfile
 dev.ps1
 workflows/
+# local scratch / one-off scripts (keep repo clean)
+app.py
+bench_recommender.py
+smoke_local.sh
