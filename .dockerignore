@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+**/*.pyc
+node_modules
+platform_app/node_modules
+platform_app/dist
+frontend/node_modules
+frontend/dist
+MIDAS_BACKUP_*
+*.log
+.env

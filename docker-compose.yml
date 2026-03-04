@@ -1,0 +1,92 @@
+services:
+  context_api:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        REQ_FILE: requirements.base.txt
+    environment:
+      LIVE_PROVIDERS: "${LIVE_PROVIDERS:-0}"
+      FINNHUB_TOKEN: "${FINNHUB_TOKEN:-}"
+      TIINGO_TOKEN: "${TIINGO_TOKEN:-}"
+      SENT_URL: "http://sentiment_api:8016"
+    command: ["uvicorn", "services.context_api.app:app", "--host", "0.0.0.0", "--port", "8012"]
+    ports:
+      - "8012:8012"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8012/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  recommender_api:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        REQ_FILE: requirements.base.txt
+    environment:
+      MODEL_PATH: "services/recommender_api/model.joblib"
+    command: ["uvicorn", "services.recommender_api.app:app", "--host", "0.0.0.0", "--port", "8014"]
+    ports:
+      - "8014:8014"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8014/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  sentiment_api:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        REQ_FILE: requirements.sentiment.txt
+    command: ["uvicorn", "services.sentiment_api.app:app", "--host", "0.0.0.0", "--port", "8016"]
+    ports:
+      - "8016:8016"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8016/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  gateway_api:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        REQ_FILE: requirements.base.txt
+    environment:
+      CTX_URL: "http://context_api:8012"
+      REC_URL: "http://recommender_api:8014"
+      GATEWAY_TIMEOUT_S: "8"
+      GATEWAY_RETRIES: "2"
+      GATEWAY_RETRY_DELAY_S: "0.25"
+    command: ["uvicorn", "services.gateway_api.app:app", "--host", "0.0.0.0", "--port", "8015"]
+    ports:
+      - "8015:8015"
+    depends_on:
+      context_api:
+        condition: service_healthy
+      recommender_api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8015/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  midas_dash:
+    build:
+      context: .
+      dockerfile: platform_app/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      gateway_api:
+        condition: service_healthy

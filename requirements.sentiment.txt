@@ -1,0 +1,4 @@
+-r requirements.base.txt
+transformers>=4.44
+accelerate>=0.33
+torch

@@ -17,9 +17,12 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
 
 def _parse_iso(s: str) -> Optional[datetime]:
-    if not s: return None
-    try: return datetime.fromisoformat(s.replace("Z","+00:00")).astimezone(timezone.utc)
-    except Exception: return None
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z","+00:00")).astimezone(timezone.utc)
+    except Exception:
+        return None
 
 def _get_json(url: str, params: dict | None = None) -> dict:
     last_exc: Optional[Exception] = None
@@ -52,7 +55,10 @@ def healthz():
     return {"status":"ok","service":"gateway","version":"v1","ts":iso_now(),"CTX_URL":CTX_URL,"REC_URL":REC_URL}
 
 @app.get("/api/run")
-def run(t: str = Query(..., alias="ticker")) -> Dict[str, Any]:
+def run(
+    t: str = Query(..., alias="ticker"),
+    explain: int = Query(0, ge=0, le=1),
+) -> Dict[str, Any]:
     # 1) features from context
     ctx = _get_json(f"{CTX_URL}/api/features/v2", params={"ticker": t})
     features: Dict[str, Any] = ctx.get("features", {}) or {}
@@ -63,8 +69,16 @@ def run(t: str = Query(..., alias="ticker")) -> Dict[str, Any]:
     refs: List[Optional[Dict[str,str]]] = ctx.get("refs") or []
     refs_sources: List[str] = ctx.get("refs_sources") or []
 
-    # 2) recommendation (top-level fields)
+    # 2) recommendation
     rec = _post_json(f"{REC_URL}/api/recommend", features)
+
+    # 2b) optional explainability (global feature importances + inputs + prediction)
+    explain_payload: Optional[Dict[str, Any]] = None
+    if explain == 1:
+        try:
+            explain_payload = _post_json(f"{REC_URL}/api/explain", features)
+        except HTTPException:
+            explain_payload = {"error": "explain unavailable"}
 
     # 3) one-liner build (pass refs for ([1][2][3]))
     headline = top_headline or {"title": "", "publisher": "", "url": ""}
@@ -75,21 +89,21 @@ def run(t: str = Query(..., alias="ticker")) -> Dict[str, Any]:
             "title":      headline.get("title", ""),
             "publisher":  headline.get("publisher", ""),
             "url":        headline.get("url", ""),
-            "refs":       refs,   # list of {title,publisher,url} or None slots
+            "refs":       refs,
         })
     except HTTPException:
         one = {"text": f"{rec.get('class','NO_ACTION')} · {int(rec.get('confidence',0)*100)}% confidence"}
 
-    # 4) compute age
+    # 4) cache age (seconds since context timestamp)
     now = datetime.now(timezone.utc)
     tctx = _parse_iso(ts_ctx) if isinstance(ts_ctx, str) else None
     age_s = int((now - tctx).total_seconds()) if tctx else None
 
-    resp = {
+    resp: Dict[str, Any] = {
         "ticker": t,
         "features": features,
         "recommendation": rec,
-        "one_liner": one,                 # includes refs_numbers for HUD links
+        "one_liner": one,
         "quote": quote,
         "top_headline": top_headline,
         "refs": refs,
@@ -98,6 +112,11 @@ def run(t: str = Query(..., alias="ticker")) -> Dict[str, Any]:
         "ts_gateway": iso_now(),
         "cache_age_seconds": age_s,
     }
+
     if feature_note:
         resp["features_note"] = feature_note
+
+    if explain_payload is not None:
+        resp["explain"] = explain_payload
+
     return resp

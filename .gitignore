@@ -1,31 +1,55 @@
-# Python
-__pycache__/
-*.pyc
-.venv/
+# Logs
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Node / Electron
-frontend/node_modules/
-frontend/dist/
-frontend/out/
-frontend/*.log
+node_modules
+dist
+dist-ssr
+*.local
 
-# OS/editor
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# Tokens & local env
-*.env
+# local secrets / env
 .env
-.env.*.local
-# model/data artifacts (if any)
-checkpoints/
-checkpoints_backup/
-data/*.pt
-data/*.bin
-data/*.pkl
-data/*.bin
-data/*.pk.
+.env.*
 frontend/.env
+
+# python junk
+.venv/
+__pycache__/
+**/__pycache__/
+**/*.pyc
+
+# node junk
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# accidental root web app artifacts (use platform_app/ instead)
+package.json
+package-lock.json
+src/
+public/
+index.html
+vite.config.ts
+tsconfig*.json
+eslint.config.js
+nginx.conf
+Dockerfile
+dev.ps1
+workflows/
