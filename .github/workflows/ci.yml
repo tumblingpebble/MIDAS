@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "proto2-hud-2025-12-05"]
+
+jobs:
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env for CI (mock mode)
+        run: |
+          cat > .env <<EOF
+          LIVE_PROVIDERS=0
+          FINNHUB_TOKEN=
+          TIINGO_TOKEN=
+          EOF
+
+      - name: Build and start stack
+        run: |
+          docker compose up -d --build
+
+      - name: Wait for gateway health
+        run: |
+          for i in $(seq 1 60); do
+            ok="$(docker inspect --format='{{json .State.Health.Status}}' $(docker compose ps -q gateway_api) 2>/dev/null || true)"
+            echo "gateway health=$ok"
+            if [ "$ok" = "\"healthy\"" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Gateway did not become healthy"
+          docker compose ps
+          docker compose logs gateway_api context_api recommender_api sentiment_api midas_dash
+          exit 1
+
+      - name: Smoke test endpoints
+        run: |
+          curl -fsS http://127.0.0.1:8015/healthz
+          curl -fsS "http://127.0.0.1:8015/api/run?ticker=AAPL&explain=1" | head -c 300
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose down -v
