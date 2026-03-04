@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Python deps (base + sentiment)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Frontend deps (React app)
+  - package-ecosystem: "npm"
+    directory: "/platform_app"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
